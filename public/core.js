@@ -53,3 +53,22 @@ export function validateBackup(data) {
   });
   return {version:1,resume:data.resume,jobs};
 }
+
+// Relative posting ages are anchored to collection time, never to page refresh.
+export function recentOpening(job, now=Date.now()) {
+  if(/no longer accepting applications|position (?:has been )?filled|job (?:is )?(?:closed|expired)|applications closed/i.test([job.title,job.description,job.snippet].join(' '))) return false;
+  const value=String(job.posted||'').trim().toLowerCase();
+  const anchor=Date.parse(job.collectedAt||'');
+  if(!Number.isFinite(anchor)||anchor>now) return false;
+  let age;
+  if(/^(?:just now|today)$/.test(value)) age=0;
+  else if(value==='yesterday') age=86400000;
+  else {
+    const m=value.match(/^(\d+)\s*(minute|hour|day)s? ago$/);
+    if(m) age=Number(m[1])*({minute:60000,hour:3600000,day:86400000}[m[2]]);
+    else if(/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)) age=anchor-Date.parse(value);
+    else return false;
+  }
+  const total=age+now-anchor;
+  return Number.isFinite(total)&&age>=0&&total>=0&&total<=3*86400000;
+}
