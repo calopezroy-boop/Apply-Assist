@@ -20,7 +20,7 @@ export function mergeJobs(existing,incoming) {
   const jobs=existing.map(j=>({...j})); let added=0,duplicates=0;
   for(const job of incoming) {
     const match=jobs.find(j=>sameJob(j,job));
-    if(match) { duplicates++; match.sources=[...new Set([...(match.sources||[match.source]),...(job.sources||[job.source])].filter(Boolean))]; }
+    if(match) { duplicates++; if(recentOpening(job)){match.posted=job.posted;match.collectedAt=job.collectedAt;} match.sources=[...new Set([...(match.sources||[match.source]),...(job.sources||[job.source])].filter(Boolean))]; }
     else { jobs.push({...job,id:job.id||crypto.randomUUID(),status:STATUSES.includes(job.status)?job.status:'New'}); added++; }
   }
   return {jobs,added,duplicates};
