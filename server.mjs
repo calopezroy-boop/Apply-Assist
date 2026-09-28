@@ -2,7 +2,7 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {timingSafeEqual} from 'node:crypto';
-import {SOURCES,cleanUrl,mergeJobs,draftPrompt} from './public/core.js';
+import {SOURCES,cleanUrl,mergeJobs,draftPrompt,recentOpening} from './public/core.js';
 const root=new URL('./',import.meta.url);
 const domains={'LinkedIn':'linkedin.com/jobs/view','Indeed':'indeed.com/viewjob','Glassdoor':'glassdoor.com/job-listing','OnlineJobs.ph':'onlinejobs.ph/jobseekers/job/'};
 const httpError=(message,status=400)=>Object.assign(new Error(message),{status});
@@ -11,18 +11,18 @@ export async function collectJobs(input,env,fetcher=fetch) {
   if(typeof input.query!=='string'||!input.query.trim()||input.query.length>180) throw httpError('Enter a search phrase under 180 characters.');
   const sources=[...new Set(input.sources||[])];
   if(!sources.length||sources.some(s=>!SOURCES.includes(s))) throw httpError('Choose supported job sources.');
-  const query=`${input.query.trim()} full time remote Philippines ${input.market==='UK'?'UK':input.market==='US'?'US':'(US OR UK)' }`;
+  const query=`${input.query.trim()} posted in the last 3 days full time remote Philippines ${input.market==='UK'?'UK':input.market==='US'?'US':'(US OR UK)' }`;
   const results=await Promise.all(sources.map(async source=>{
     try {
       const params=new URLSearchParams({api_key:env.SERPAPI_API_KEY,engine:source==='Google Jobs'?'google_jobs':'google',q:source==='Google Jobs'?query:`site:${domains[source]} ${query}`,hl:'en',gl:'ph'});
-      if(source!=='Google Jobs') params.set('num','10');
+      if(source!=='Google Jobs') { params.set('num','10'); params.set('tbs','qdr:d3'); }
       const res=await fetcher(`https://serpapi.com/search.json?${params}`,{signal:AbortSignal.timeout(30000)});
       if(!res.ok) throw Error(`Provider returned HTTP ${res.status}`);
       const data=await res.json();
       if(data.error) throw Error('Search provider reported an error; check quota and key in your provider dashboard.');
       const rows=source==='Google Jobs'?(data.jobs_results||[]):(data.organic_results||[]);
-      const jobs=rows.slice(0,10).map(r=>({title:String(r.title||''),company:String(r.company_name||''),url:cleanUrl(r.apply_options?.[0]?.link||r.link||r.share_link||''),location:String(r.location||''),salary:String(r.detected_extensions?.salary||''),posted:String(r.detected_extensions?.posted_at||r.date||''),description:source==='Google Jobs'?String(r.description||''):'',snippet:String(r.snippet||''),source,sources:[source],collectedAt:new Date().toISOString(),status:'New'})).filter(j=>j.title&&j.url&&(source==='Google Jobs'||j.url.includes(domains[source])));
-      return {source,jobs,notice:source==='Google Jobs'?'Google Jobs results; verify availability on the posting.':'Indexed search results, not a direct board crawl. Paste the full description before drafting.'};
+      const jobs=rows.slice(0,10).map(r=>({title:String(r.title||''),company:String(r.company_name||''),url:cleanUrl(r.apply_options?.[0]?.link||r.link||r.share_link||''),location:String(r.location||''),salary:String(r.detected_extensions?.salary||''),posted:String(r.detected_extensions?.posted_at||(String(r.snippet||'').match(/\bposted\s+(\d+\s+(?:minute|hour|day)s? ago|today|yesterday)\b/i)?.[1])||''),description:source==='Google Jobs'?String(r.description||''):'',snippet:String(r.snippet||''),source,sources:[source],collectedAt:new Date().toISOString(),status:'New'})).filter(j=>recentOpening(j)&&j.title&&j.url&&(source==='Google Jobs'||j.url.includes(domains[source])));
+      return {source,jobs,notice:source==='Google Jobs'?'Last 3 days only, based on reported posting age. Verify availability on the posting.':'Last 3 days only. Undated, older and known closed listings excluded. Index dates are not treated as posting dates; fewer results may appear.'};
     } catch(e) { return {source,jobs:[],error:e.name==='TimeoutError'?'Search timed out; try again.':e.message.includes('HTTP')?e.message:'Search failed. Check provider configuration or quota.'}; }
   }));
   return {jobs:mergeJobs([],results.flatMap(r=>r.jobs)).jobs,reports:results.map(({jobs,...r})=>({...r,count:jobs.length})),searchedAt:new Date().toISOString()};
