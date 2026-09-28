@@ -51,3 +51,10 @@ test('freshness excludes old, unknown and closed jobs and ages stored results',(
  assert.equal(recentOpening({...j,posted:'today',description:'No longer accepting applications'},now),false);
  assert.equal(recentOpening({posted:'today'},now),false);
 });
+
+test('empty provider results are not mislabeled as configuration failures',async()=>{
+ const r=await collectJobs({query:'operations',sources:['Google Jobs']},{SERPAPI_API_KEY:'fake'},async()=>({ok:true,json:async()=>({error:"Google hasn't returned any results for this query."})}));
+ assert.equal(r.reports[0].error,undefined);assert.equal(r.reports[0].count,0);assert.match(r.reports[0].notice,/No search results/);
+ const bad=await collectJobs({query:'operations',sources:['Google Jobs']},{SERPAPI_API_KEY:'secret-key'},async()=>({ok:true,json:async()=>({error:'Invalid API key secret-key'})}));
+ assert.match(bad.reports[0].error,/Invalid API key/);assert.ok(!bad.reports[0].error.includes('secret-key'));
+});
