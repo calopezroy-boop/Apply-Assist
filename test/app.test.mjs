@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer,collectJobs,generateDraft} from '../server.mjs';
-import {cleanUrl,mergeJobs,eligibility,validateBackup,draftPrompt} from '../public/core.js';
+import {cleanUrl,mergeJobs,eligibility,validateBackup,draftPrompt,recentOpening} from '../public/core.js';
 
 test('dedupe keeps user status/draft across sources and strips tracking',()=>{
  const a={id:'one',title:'Operations Assistant',company:'Acme',location:'Remote',url:'https://example.com/job/1?utm_source=linkedin',status:'Applied',intro:'My saved draft',source:'LinkedIn'};
@@ -22,7 +22,7 @@ test('backup validation rejects malformed input and unsafe URLs',()=>{
  const r=validateBackup({version:1,resume:'ok',jobs:[{title:'VA',url:'javascript:alert(1)',status:'hacked'}]});assert.equal(r.jobs[0].url,'');assert.equal(r.jobs[0].status,'New');
 });
 test('search normalizes structured and indexed results and reports partial failures',async()=>{
- const fetcher=async url=>{const u=new URL(url);if(u.searchParams.get('engine')==='google_jobs')return {ok:true,json:async()=>({jobs_results:[{title:'Operations VA',company_name:'Acme',description:'Full-time Philippines',apply_options:[{link:'https://example.com/job/1'}],detected_extensions:{salary:'$800/month',posted_at:'1 day ago'}}]})};if(u.searchParams.get('q').includes('linkedin'))return {ok:false,status:429};return {ok:true,json:async()=>({organic_results:[{title:'Order Assistant',link:'https://www.onlinejobs.ph/jobseekers/job/example-1',snippet:'Full-time remote role'},{title:'Wrong',link:'https://example.com/profile'}]})};};
+ const fetcher=async url=>{const u=new URL(url);if(u.searchParams.get('engine')==='google_jobs')return {ok:true,json:async()=>({jobs_results:[{title:'Operations VA',company_name:'Acme',description:'Full-time Philippines',apply_options:[{link:'https://example.com/job/1'}],detected_extensions:{salary:'$800/month',posted_at:'1 day ago'}}]})};if(u.searchParams.get('q').includes('linkedin'))return {ok:false,status:429};return {ok:true,json:async()=>({organic_results:[{title:'Order Assistant',link:'https://www.onlinejobs.ph/jobseekers/job/example-1',snippet:'Posted 2 days ago. Full-time remote role'},{title:'Wrong',link:'https://example.com/profile'}]})};};
  const r=await collectJobs({query:'operations',sources:['Google Jobs','LinkedIn','OnlineJobs.ph']},{SERPAPI_API_KEY:'fake'},fetcher);assert.equal(r.jobs.length,2);assert.equal(r.jobs[0].salary,'$800/month');assert.equal(r.jobs[1].description,'');assert.match(r.reports[1].error,/429/);
  await assert.rejects(()=>collectJobs({query:'x',sources:['Google Jobs']},{},fetcher),/SERPAPI_API_KEY/);
 });
@@ -40,4 +40,14 @@ test('HTTP protects resume/API, blocks cross-origin writes and private files',as
  const headers={Authorization:'Bearer a-long-private-password'};const conf=await(await fetch(base+'/api/config',{headers})).json();assert.equal(conf.searchReady,false);assert.ok(!JSON.stringify(conf).includes('private-password'));
  assert.equal((await fetch(base+'/api/search',{method:'POST',headers:{...headers,Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'})).status,403);
  assert.throws(()=>createServer({NODE_ENV:'production'}),/APP_PASSWORD/);
+});
+
+test('freshness excludes old, unknown and closed jobs and ages stored results',()=>{
+ const now=Date.parse('2026-09-28T12:00:00Z');
+ const j={collectedAt:new Date(now).toISOString()};
+ for(const posted of ['today','yesterday','2 days ago','3 days ago','4 hours ago']) assert.equal(recentOpening({...j,posted},now),true,posted);
+ for(const posted of ['', 'unknown','4 days ago','2 months ago','30+ days ago','2099-01-01']) assert.equal(recentOpening({...j,posted},now),false,posted);
+ assert.equal(recentOpening({...j,posted:'2 days ago'},now+2*86400000),false);
+ assert.equal(recentOpening({...j,posted:'today',description:'No longer accepting applications'},now),false);
+ assert.equal(recentOpening({posted:'today'},now),false);
 });
